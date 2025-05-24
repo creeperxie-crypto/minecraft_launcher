@@ -25,7 +25,7 @@ impl State {
     async fn new(window: Arc<Window>) -> State {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
+            backends: wgpu::Backends::GL,
             ..Default::default()
         });
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -37,7 +37,11 @@ impl State {
             .await
             .unwrap();
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                #[cfg(target_arch = "wasm32")]
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                ..Default::default()
+            })
             .await
             .unwrap();
         let caps = surface.get_capabilities(&adapter);
@@ -48,12 +52,15 @@ impl State {
             .copied()
             .unwrap_or(caps.formats[0]);
         let size = window.inner_size();
-assert!(size.width > 0 && size.height > 0, "inner size must not be 0 0 during wgpu initialization. a resize event is expected shortly, but initialization has already failed.");
+        // ensure size at least 1 1 to avoid wgpu initialization failure, a
+        // resize event will occur shortly
+        let width = size.width.max(1);
+        let height = size.height.max(1);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            width: size.width,
-            height: size.height,
+            width,
+            height,
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 3,
             alpha_mode: caps.alpha_modes[0],
@@ -119,14 +126,13 @@ impl ApplicationHandler<State> for App {
         #[cfg(target_arch = "wasm32")]
         {
             use winit::platform::web::WindowAttributesExtWebSys;
-            
             let canvas = web_sys::window()
                 .and_then(|win| win.document())
                 .and_then(|doc| doc.get_element_by_id("canvas"))
                 .and_then(|canvas| canvas.dyn_into::<web_sys::HtmlCanvasElement>().ok());
+
             attributes = attributes.with_canvas(canvas);
         }
-
         let window = Arc::new(event_loop.create_window(attributes).unwrap());
         self.window = Some(window.clone());
 
@@ -150,7 +156,7 @@ impl ApplicationHandler<State> for App {
                 if let Some(state) = &mut self.state {
                     state.resize(size);
                 }
-            },
+            }
             WindowEvent::RedrawRequested => {
                 if let Some(state) = &self.state {
                     state.render();
@@ -159,7 +165,7 @@ impl ApplicationHandler<State> for App {
             _ => (),
         }
     }
-    
+
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: State) {
         #[cfg(target_arch = "wasm32")]
         {
